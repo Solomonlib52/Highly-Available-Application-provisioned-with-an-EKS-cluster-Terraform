@@ -111,7 +111,7 @@ jobs:
             fi
             cd "$APP_ROOT/kubernetes/docker"
             cat > .env <<'EOF'
-            DRUPAL_IMAGE=${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+            DRUPAL_IMAGE=${{ env.IMAGE_NAME }}:${{ github.sha }}
             DRUPAL_PORT=${{ secrets.STAGING_DRUPAL_PORT || '8080' }}
             DRUPAL_DB_HOST=db
             DRUPAL_DB_PORT=3306
@@ -123,7 +123,7 @@ jobs:
             MYSQL_ROOT_PASSWORD=${{ secrets.STAGING_MYSQL_ROOT_PASSWORD }}
             EOF
             docker compose pull
-            docker compose up -d --remove-orphans
+            docker compose up -d --force-recreate --remove-orphans
             docker image prune -f
 
   smoke-test-staging:
@@ -169,7 +169,7 @@ jobs:
             fi
             cd "$APP_ROOT/kubernetes/docker"
             cat > .env <<'EOF'
-            DRUPAL_IMAGE=${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+            DRUPAL_IMAGE=${{ env.IMAGE_NAME }}:${{ github.sha }}
             DRUPAL_PORT=${{ secrets.PRODUCTION_DRUPAL_PORT || '8080' }}
             DRUPAL_DB_HOST=db
             DRUPAL_DB_PORT=3306
@@ -181,5 +181,5 @@ jobs:
             MYSQL_ROOT_PASSWORD=${{ secrets.PRODUCTION_MYSQL_ROOT_PASSWORD }}
             EOF
             docker compose pull
-            docker compose up -d --remove-orphans
+            docker compose up -d --force-recreate --remove-orphans
             docker image prune -f

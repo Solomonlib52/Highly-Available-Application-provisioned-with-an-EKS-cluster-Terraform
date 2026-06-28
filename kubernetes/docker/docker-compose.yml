@@ -19,6 +19,7 @@ services:
       DRUPAL_DB_USER: ${DRUPAL_DB_USER}
       DRUPAL_DB_PASSWORD: ${DRUPAL_DB_PASSWORD}
       DRUPAL_HASH_SALT: ${DRUPAL_HASH_SALT}
+      DRUPAL_TRUSTED_HOSTS: ${DRUPAL_TRUSTED_HOSTS:-localhost,127.0.0.1}
     volumes:
       - drupal_files:/var/www/html/sites/default/files
     restart: unless-stopped
