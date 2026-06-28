@@ -9,7 +9,6 @@ on:
 env:
   IMAGE_NAME: solomonlib/bincom-drupal
   IMAGE_TAG: v1
-  COMPOSE_FILE: kubernetes/docker/docker-compose.yml
   APP_DIR: kubernetes/docker
 
 jobs:
