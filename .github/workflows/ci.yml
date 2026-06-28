@@ -100,8 +100,15 @@ jobs:
           key: ${{ secrets.STAGING_EC2_SSH_KEY }}
           script: |
             set -e
-            cd "${{ secrets.STAGING_APP_DIR || '/home/ubuntu/bincom-drupal-test' }}/kubernetes/docker"
-            git pull origin main
+            APP_ROOT="${{ secrets.STAGING_APP_DIR || '/home/ubuntu/bincom-drupal-test' }}"
+            if [ ! -d "$APP_ROOT/.git" ]; then
+              mkdir -p "$(dirname "$APP_ROOT")"
+              git clone --branch main "https://github.com/${{ github.repository }}.git" "$APP_ROOT"
+            else
+              cd "$APP_ROOT"
+              git pull --ff-only origin main
+            fi
+            cd "$APP_ROOT/kubernetes/docker"
             cat > .env <<'EOF'
             DRUPAL_IMAGE=${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
             DRUPAL_PORT=${{ secrets.STAGING_DRUPAL_PORT || '8080' }}
@@ -150,8 +157,15 @@ jobs:
           key: ${{ secrets.PRODUCTION_EC2_SSH_KEY }}
           script: |
             set -e
-            cd "${{ secrets.PRODUCTION_APP_DIR || '/home/ubuntu/bincom-drupal-test' }}/kubernetes/docker"
-            git pull origin main
+            APP_ROOT="${{ secrets.PRODUCTION_APP_DIR || '/home/ubuntu/bincom-drupal-test' }}"
+            if [ ! -d "$APP_ROOT/.git" ]; then
+              mkdir -p "$(dirname "$APP_ROOT")"
+              git clone --branch main "https://github.com/${{ github.repository }}.git" "$APP_ROOT"
+            else
+              cd "$APP_ROOT"
+              git pull --ff-only origin main
+            fi
+            cd "$APP_ROOT/kubernetes/docker"
             cat > .env <<'EOF'
             DRUPAL_IMAGE=${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
             DRUPAL_PORT=${{ secrets.PRODUCTION_DRUPAL_PORT || '8080' }}
