@@ -1,0 +1,39 @@
+# Local environment files
+.env
+.env.*
+!.env.example
+
+# SSH keys and certificates
+keys/
+*.pem
+*.key
+*.crt
+
+# Terraform local state and cache
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+*.tfvars.json
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# Generated Ansible inventory and variables
+ansible/inventory.ini
+ansible/group_vars/all.yml
+ansible/host_vars/*.yml
+ansible/terraform.tfstate
+
+# Kubernetes environment-specific secrets
+kubernetes/k8s/secrets.yml
+kubernetes/k8s/configmap.yml
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

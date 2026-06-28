@@ -1,0 +1,169 @@
+name: Drupal CI/CD
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  IMAGE_NAME: solomonlib/bincom-drupal
+  IMAGE_TAG: v1
+  COMPOSE_FILE: kubernetes/docker/docker-compose.yml
+  APP_DIR: kubernetes/docker
+
+jobs:
+  build-test-and-push:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Create CI environment file
+        working-directory: ${{ env.APP_DIR }}
+        run: |
+          cat > .env <<'EOF'
+          DRUPAL_IMAGE=${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+          DRUPAL_PORT=8080
+          DRUPAL_DB_HOST=db
+          DRUPAL_DB_PORT=3306
+          DRUPAL_DB_NAME=drupaldb
+          DRUPAL_DB_USER=drupal_admin
+          DRUPAL_DB_PASSWORD=ci-drupal-password
+          DRUPAL_HASH_SALT=ci-drupal-hash-salt
+          MYSQL_ROOT_PASSWORD=ci-mysql-root-password
+          EOF
+
+      - name: Validate Docker Compose config
+        working-directory: ${{ env.APP_DIR }}
+        run: docker compose config
+
+      - name: Build Drupal image
+        uses: docker/build-push-action@v5
+        with:
+          context: ${{ env.APP_DIR }}
+          file: ${{ env.APP_DIR }}/Dockerfile
+          load: true
+          tags: |
+            ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+            ${{ env.IMAGE_NAME }}:${{ github.sha }}
+
+      - name: Run integration smoke test locally
+        working-directory: ${{ env.APP_DIR }}
+        run: |
+          docker compose up -d
+          for i in {1..30}; do
+            if curl -fsS http://localhost:8080/core/misc/drupal.js >/dev/null; then
+              exit 0
+            fi
+            sleep 5
+          done
+          docker compose logs
+          exit 1
+
+      - name: Stop local test stack
+        if: always()
+        working-directory: ${{ env.APP_DIR }}
+        run: docker compose down -v
+
+      - name: Login to Docker Hub
+        if: github.event_name == 'push'
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Push Drupal image
+        if: github.event_name == 'push'
+        uses: docker/build-push-action@v5
+        with:
+          context: ${{ env.APP_DIR }}
+          file: ${{ env.APP_DIR }}/Dockerfile
+          push: true
+          tags: |
+            ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+            ${{ env.IMAGE_NAME }}:${{ github.sha }}
+
+  deploy-staging:
+    if: github.event_name == 'push'
+    needs: build-test-and-push
+    runs-on: ubuntu-latest
+    environment:
+      name: staging
+
+    steps:
+      - name: Deploy to EC2 via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.STAGING_EC2_HOST }}
+          username: ${{ secrets.STAGING_EC2_USER || 'ubuntu' }}
+          key: ${{ secrets.STAGING_EC2_SSH_KEY }}
+          script: |
+            set -e
+            cd "${{ secrets.STAGING_APP_DIR || '/home/ubuntu/bincom-drupal-test' }}/kubernetes/docker"
+            git pull origin main
+            cat > .env <<'EOF'
+            DRUPAL_IMAGE=${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+            DRUPAL_PORT=${{ secrets.STAGING_DRUPAL_PORT || '8080' }}
+            DRUPAL_DB_HOST=db
+            DRUPAL_DB_PORT=3306
+            DRUPAL_DB_NAME=${{ secrets.STAGING_DRUPAL_DB_NAME }}
+            DRUPAL_DB_USER=${{ secrets.STAGING_DRUPAL_DB_USER }}
+            DRUPAL_DB_PASSWORD=${{ secrets.STAGING_DRUPAL_DB_PASSWORD }}
+            DRUPAL_HASH_SALT=${{ secrets.STAGING_DRUPAL_HASH_SALT }}
+            MYSQL_ROOT_PASSWORD=${{ secrets.STAGING_MYSQL_ROOT_PASSWORD }}
+            EOF
+            docker compose pull
+            docker compose up -d --remove-orphans
+            docker image prune -f
+
+  smoke-test-staging:
+    if: github.event_name == 'push'
+    needs: deploy-staging
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Smoke test staging
+        run: |
+          STAGING_URL="${{ secrets.STAGING_DRUPAL_URL || format('http://{0}:{1}', secrets.STAGING_EC2_HOST, secrets.STAGING_DRUPAL_PORT || '8080') }}"
+          for i in {1..20}; do
+            if curl -fsS "$STAGING_URL/core/misc/drupal.js" >/dev/null; then
+              exit 0
+            fi
+            sleep 10
+          done
+          curl -fsS "$STAGING_URL/core/misc/drupal.js"
+
+  deploy-production:
+    if: github.event_name == 'push'
+    needs: smoke-test-staging
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+
+    steps:
+      - name: Deploy production to EC2 via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.PRODUCTION_EC2_HOST }}
+          username: ${{ secrets.PRODUCTION_EC2_USER || 'ubuntu' }}
+          key: ${{ secrets.PRODUCTION_EC2_SSH_KEY }}
+          script: |
+            set -e
+            cd "${{ secrets.PRODUCTION_APP_DIR || '/home/ubuntu/bincom-drupal-test' }}/kubernetes/docker"
+            git pull origin main
+            cat > .env <<'EOF'
+            DRUPAL_IMAGE=${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+            DRUPAL_PORT=${{ secrets.PRODUCTION_DRUPAL_PORT || '8080' }}
+            DRUPAL_DB_HOST=db
+            DRUPAL_DB_PORT=3306
+            DRUPAL_DB_NAME=${{ secrets.PRODUCTION_DRUPAL_DB_NAME }}
+            DRUPAL_DB_USER=${{ secrets.PRODUCTION_DRUPAL_DB_USER }}
+            DRUPAL_DB_PASSWORD=${{ secrets.PRODUCTION_DRUPAL_DB_PASSWORD }}
+            DRUPAL_HASH_SALT=${{ secrets.PRODUCTION_DRUPAL_HASH_SALT }}
+            MYSQL_ROOT_PASSWORD=${{ secrets.PRODUCTION_MYSQL_ROOT_PASSWORD }}
+            EOF
+            docker compose pull
+            docker compose up -d --remove-orphans
+            docker image prune -f

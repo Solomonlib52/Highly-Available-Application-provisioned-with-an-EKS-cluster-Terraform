@@ -1,0 +1,19 @@
+<?php
+$databases['default']['default'] = array (
+  'database' => '{{ db_name }}',
+  'username' => '{{ db_user }}',
+  'password' => '{{ db_password }}',
+  'prefix' => '',
+  'host' => '{{ db_host }}',
+  'port' => '{{ db_port | default("3306") }}',
+  'namespace' => 'Drupal\\Core\\Database\\Driver\\mysql',
+  'driver' => 'mysql',
+);
+
+$settings['hash_salt'] = '{{ hash_salt | default(ansible_date_time.iso8601_basic_short ~ inventory_hostname) }}';
+
+$settings['trusted_host_patterns'] = array(
+  '^.*$'
+);
+
+// You can add additional settings below if required by your environment.

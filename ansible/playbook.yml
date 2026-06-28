@@ -1,0 +1,205 @@
+- name: Deploy High-Availability Drupal Stack for Bincom Academy
+  hosts: webservers
+  become: true
+  vars:
+    drupal_version: "10.2.5"
+    drupal_url: "https://ftp.drupal.org/files/projects/drupal-{{ drupal_version }}.tar.gz"
+    # Provide these via inventory or group_vars (examples in group_vars/all.yml)
+    # db_host: RDS endpoint or DB host
+    # db_name: drupaldb
+    # db_user: drupal_admin
+    # db_password: <sensitive_password>
+    # peer_private_ip: private IP of the other web node for rsync
+    # php_version: 8.3
+
+  tasks:
+    # 1. Setup Swap Space to prevent micro instances from crashing during dependencies install
+    - name: Create 1GB Swap space for t3.micro memory safety
+      shell: |
+        if [ ! -f /swapfile ]; then
+          fallocate -l 1G /swapfile
+          chmod 600 /swapfile
+          mkswap /swapfile
+          swapon /swapfile
+          echo '/swapfile none swap sw 0 0' >> /etc/fstab
+        fi
+      args:
+        creates: /swapfile
+
+    # 2. Update System Package Repository
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+
+    - name: Add PHP PPA for PHP versions not available in Ubuntu 24.04
+      apt_repository:
+        repo: ppa:ondrej/php
+        state: present
+      become: true
+      when: not (ansible_distribution_release == "noble" and php_version == "8.3")
+
+    # 3. Install core tools including rsync for file synchronization
+    - name: Install system prerequisites and rsync
+      apt:
+        name:
+          - unzip
+          - curl
+          - git
+          - rsync
+          - acl
+        state: present
+
+    # 4. Install Apache and Drupal-specific PHP 8.3 Extensions
+    - name: Install Apache and PHP with Drupal dependencies
+      apt:
+        name:
+          - apache2
+          - "php{{ php_version }}"
+          - "php{{ php_version }}-cli"
+          - "php{{ php_version }}-common"
+          - "php{{ php_version }}-mysql"
+          - "php{{ php_version }}-gd"
+          - "php{{ php_version }}-curl"
+          - "php{{ php_version }}-zip"
+          - "php{{ php_version }}-xml"
+          - "php{{ php_version }}-mbstring"
+          - "php{{ php_version }}-intl"
+          - "php{{ php_version }}-bcmath"
+          - "php{{ php_version }}-opcache"
+          - "php{{ php_version }}-dom"
+          - "libapache2-mod-php{{ php_version }}"
+        state: present
+
+# 5. Configure PHP limits required by Drupal's core configuration wizard
+    - name: Optimize php.ini settings for Drupal
+      lineinfile:
+        path: "/etc/php/{{ php_version }}/apache2/php.ini"
+        regexp: "{{ item.regexp }}"
+        line: "{{ item.line }}"
+      loop:
+        - { regexp: '^memory_limit =', line: 'memory_limit = 512M' }
+        - { regexp: '^upload_max_filesize =', line: 'upload_max_filesize = 64M' }
+        - { regexp: '^post_max_size =', line: 'post_max_size = 64M' }
+        - { regexp: '^max_execution_time =', line: 'max_execution_time = 600' } # Bumped to 10 mins
+        - { regexp: '^max_input_time =', line: 'max_input_time = 600' }
+
+    # 6. Enable Apache rewrite module and configure site
+    - name: Enable Apache rewrite engine
+      apache2_module:
+        name: rewrite
+        state: present
+      notify: Restart Apache
+
+    - name: Create Apache Drupal site configuration
+      copy:
+        content: |
+          <VirtualHost *:80>
+            ServerName {{ load_balancer_dns | default(ansible_host) }}
+            DocumentRoot /var/www/html
+            DirectoryIndex index.php index.html
+
+            <Directory /var/www/html>
+              Options Indexes FollowSymLinks
+              AllowOverride All
+              Require all granted
+            </Directory>
+          </VirtualHost>
+        dest: /etc/apache2/sites-available/000-default.conf
+      notify: Restart Apache
+
+    - name: Enable Apache PHP module
+      apache2_module:
+        name: "php{{ php_version }}"
+        state: present
+      notify: Restart Apache
+      ignore_errors: true
+
+    # 7. Clean default index page
+    - name: Clear default Apache assets
+      file:
+        path: /var/www/html/index.html
+        state: absent
+
+    # 8. Download Drupal Core Release Package
+    - name: Download Drupal core archive
+      get_url:
+        url: "{{ drupal_url }}"
+        dest: /tmp/drupal.tar.gz
+
+    # 9. Extract Drupal files directly into the web server directory
+    - name: Extract Drupal into Apache root path
+      unarchive:
+        src: /tmp/drupal.tar.gz
+        dest: /var/www/html/
+        remote_src: yes
+        extra_opts: ['--strip-components=1'] # Drops files directly into /html instead of an inner folder
+        creates: /var/www/html/core/lib/Drupal.php
+
+    # 10. Prepare Drupal files directory and settings file
+    - name: Initialize Drupal public files directory
+      file:
+        path: /var/www/html/sites/default/files
+        state: directory
+        mode: '0777'
+
+    # 11. Fix Linux ownership permissions for Apache execution
+    - name: Rectify Apache web root ownership permissions
+      file:
+        path: /var/www/html
+        owner: www-data
+        group: www-data
+        recurse: yes
+
+    # Ensure default.settings.php exists and create settings.php from template if DB vars provided
+    - name: Ensure default.settings.php exists
+      copy:
+        src: /var/www/html/sites/default/default.settings.php
+        dest: /var/www/html/sites/default/default.settings.php
+        remote_src: yes
+        force: no
+
+    - name: Create settings.php from template when DB info provided
+      template:
+        src: templates/settings.php.j2
+        dest: /var/www/html/sites/default/settings.php
+        owner: www-data
+        group: www-data
+        mode: '0640'
+      when: db_host is defined and db_name is defined and db_user is defined and db_password is defined
+
+    - name: Ensure settings.php is writable for install step
+      file:
+        path: /var/www/html/sites/default/settings.php
+        mode: '0660'
+      when: db_host is defined and db_name is defined and db_user is defined and db_password is defined
+
+    - name: Ensure settings.php is world-readable for Drupal installer
+      file:
+        path: /var/www/html/sites/default/settings.php
+        mode: '0666'
+      when: db_host is defined and db_name is defined and db_user is defined and db_password is defined
+
+    - name: Notify Drupal installation instructions
+      debug:
+        msg: |
+          Drupal core installed successfully!
+          DB credentials configured in settings.php
+          Visit http://{{ ansible_host }}/install.php to complete the installation
+
+    # 12. FILE SYNCHRONIZATION: Automate the cross-server mirroring using rsync and Cron
+    - name: Setup automated cron job to push updates to peer node (rsync)
+      cron:
+        name: "Drupal cross-server cluster synchronization push"
+        minute: "*/1"
+        job: "rsync -avz --delete /var/www/html/sites/default/files/ ubuntu@{{ peer_private_ip }}:/var/www/html/sites/default/files/ > /dev/null 2>&1"
+      when: peer_private_ip is defined and peer_private_ip != ''
+
+    - name: Drupal provisioning complete
+      debug:
+        msg: "✓ Drupal core successfully installed with DB credentials configured. Visit your load balancer URL + /install.php to complete the Drupal setup."
+
+  handlers:
+    - name: Restart Apache
+      service:
+        name: apache2
+        state: restarted

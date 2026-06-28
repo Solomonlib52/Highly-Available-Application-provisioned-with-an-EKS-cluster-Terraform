@@ -1,0 +1,28 @@
+- name: Clear shared Drupal database cache tables
+  hosts: webservers[0]
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Truncate Drupal cache tables in the shared database
+      shell: |
+        php <<'PHP'
+        <?php
+        $dsn = 'mysql:host={{ db_host }};port={{ db_port | default("3306") }};dbname={{ db_name }};charset=utf8mb4';
+        $pdo = new PDO($dsn, '{{ db_user }}', '{{ db_password }}', [
+          PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+        ]);
+
+        $tables = $pdo->query("SHOW TABLES LIKE 'cache%'")->fetchAll(PDO::FETCH_COLUMN);
+        foreach ($tables as $table) {
+          $safeTable = str_replace('`', '``', $table);
+          $pdo->exec("TRUNCATE TABLE `$safeTable`");
+          echo "Truncated $table\n";
+        }
+        PHP
+      no_log: true
+
+    - name: Restart Apache after cache clear
+      service:
+        name: apache2
+        state: restarted

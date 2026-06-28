@@ -1,0 +1,48 @@
+services:
+  drupal:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ${DRUPAL_IMAGE:-solomonlib/bincom-drupal:v1}
+    container_name: bincom-drupal
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "${DRUPAL_PORT:-8080}:80"
+    env_file:
+      - ${APP_ENV_FILE:-.env}
+    environment:
+      DRUPAL_DB_HOST: ${DRUPAL_DB_HOST:-db}
+      DRUPAL_DB_PORT: ${DRUPAL_DB_PORT:-3306}
+      DRUPAL_DB_NAME: ${DRUPAL_DB_NAME}
+      DRUPAL_DB_USER: ${DRUPAL_DB_USER}
+      DRUPAL_DB_PASSWORD: ${DRUPAL_DB_PASSWORD}
+      DRUPAL_HASH_SALT: ${DRUPAL_HASH_SALT}
+    volumes:
+      - drupal_files:/var/www/html/sites/default/files
+    restart: unless-stopped
+
+  db:
+    image: mysql:8.0
+    container_name: bincom-drupal-db
+    command: --default-authentication-plugin=mysql_native_password
+    env_file:
+      - ${APP_ENV_FILE:-.env}
+    environment:
+      MYSQL_DATABASE: ${DRUPAL_DB_NAME}
+      MYSQL_USER: ${DRUPAL_DB_USER}
+      MYSQL_PASSWORD: ${DRUPAL_DB_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+    volumes:
+      - db_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$${MYSQL_ROOT_PASSWORD} --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+volumes:
+  drupal_files:
+  db_data:
