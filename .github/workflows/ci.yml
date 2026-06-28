@@ -31,6 +31,7 @@ jobs:
           DRUPAL_DB_USER=drupal_admin
           DRUPAL_DB_PASSWORD=ci-drupal-password
           DRUPAL_HASH_SALT=ci-drupal-hash-salt
+          DRUPAL_TRUSTED_HOSTS=localhost,127.0.0.1
           MYSQL_ROOT_PASSWORD=ci-mysql-root-password
           EOF
 
@@ -118,6 +119,7 @@ jobs:
             DRUPAL_DB_USER=${{ secrets.STAGING_DRUPAL_DB_USER }}
             DRUPAL_DB_PASSWORD=${{ secrets.STAGING_DRUPAL_DB_PASSWORD }}
             DRUPAL_HASH_SALT=${{ secrets.STAGING_DRUPAL_HASH_SALT }}
+            DRUPAL_TRUSTED_HOSTS=${{ secrets.STAGING_DRUPAL_HOSTS || secrets.STAGING_EC2_HOST }}
             MYSQL_ROOT_PASSWORD=${{ secrets.STAGING_MYSQL_ROOT_PASSWORD }}
             EOF
             docker compose pull
@@ -134,12 +136,12 @@ jobs:
         run: |
           STAGING_URL="${{ secrets.STAGING_DRUPAL_URL || format('http://{0}:{1}', secrets.STAGING_EC2_HOST, secrets.STAGING_DRUPAL_PORT || '8080') }}"
           for i in {1..20}; do
-            if curl -fsS "$STAGING_URL/core/misc/drupal.js" >/dev/null; then
+            if curl --connect-timeout 5 --max-time 10 -fsS "$STAGING_URL/core/misc/drupal.js" >/dev/null; then
               exit 0
             fi
             sleep 10
           done
-          curl -fsS "$STAGING_URL/core/misc/drupal.js"
+          curl --connect-timeout 5 --max-time 10 -fsS "$STAGING_URL/core/misc/drupal.js"
 
   deploy-production:
     if: github.event_name == 'push'
@@ -175,6 +177,7 @@ jobs:
             DRUPAL_DB_USER=${{ secrets.PRODUCTION_DRUPAL_DB_USER }}
             DRUPAL_DB_PASSWORD=${{ secrets.PRODUCTION_DRUPAL_DB_PASSWORD }}
             DRUPAL_HASH_SALT=${{ secrets.PRODUCTION_DRUPAL_HASH_SALT }}
+            DRUPAL_TRUSTED_HOSTS=${{ secrets.PRODUCTION_DRUPAL_HOSTS || secrets.PRODUCTION_EC2_HOST }}
             MYSQL_ROOT_PASSWORD=${{ secrets.PRODUCTION_MYSQL_ROOT_PASSWORD }}
             EOF
             docker compose pull
